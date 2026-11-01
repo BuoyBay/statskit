@@ -1,0 +1,11 @@
+Import statskit
+Sub Main()
+    Dim values() As Double = [1.0, 2.0, 3.0, 4.0]
+    Print("Mean: " + Str(Stats.Mean(values)))
+    Print("Sample variance: " + Str(Stats.SampleVariance(values)))
+    Dim running As New RunningStatistics
+    For Each value As Double In values
+        running.Add(value)
+    Next
+    Print("Running mean: " + Str(running.Mean))
+End Sub

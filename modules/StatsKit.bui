@@ -1,0 +1,432 @@
+Private Sub Finite(value As Double)
+    If Not (value <= 1.7976931348623157e308 And value >= -1.7976931348623157e308) Then Throw New InvalidArgumentException("StatsKit requires finite values and representable results")
+End Sub
+
+Private Sub Validate(values As Array Of Double, minimumCount As Integer)
+    If Array.Count(values) < minimumCount Then Throw New InvalidArgumentException("Insufficient observations")
+    For Each value As Double In values
+        Finite(value)
+    Next
+End Sub
+
+' Expansion summation: each partial retains rounding lost by larger partials.
+Private Function AccurateSum(values As Array Of Double) As Double
+    Dim partials() As Double
+    For Each value As Double In values
+        Dim x As Double = value
+        Dim kept As Integer = 0
+        For i As Integer = 0 To Array.Count(partials) - 1
+            Dim y As Double = partials(i)
+            If Math.Abs(x) < Math.Abs(y) Then
+                Dim swap As Double = x
+                x = y
+                y = swap
+            End If
+            Dim high As Double = x + y
+            Finite(high)
+            Dim low As Double = y - (high - x)
+            If low <> 0.0 Then
+                partials(kept) = low
+                kept += 1
+            End If
+            x = high
+        Next
+        While Array.Count(partials) > kept
+            Array.RemoveAt(partials, Array.Count(partials) - 1)
+        End While
+        Array.Append(partials, x)
+    Next
+    Dim total As Double = 0.0
+    For Each part As Double In partials
+        total += part
+    Next
+    Finite(total)
+    Return total
+End Function
+
+' Evaluate a weighted term without underflowing the weight ratio first.
+Private Function WeightedTerm(value As Double, weight As Double, largest As Double, total As Double) As Double
+    Dim fraction As Double = (weight / largest) / total
+    If fraction >= 1.0e-280 Or Math.Abs(value) <= 1.0 Or weight = 0.0 Then Return value * fraction
+    Dim exponent As Integer = 0
+    While Math.Abs(value) >= 2.0
+        value *= 0.5
+        exponent += 1
+    End While
+    While weight < 1.0
+        weight *= 2.0
+        exponent -= 1
+    End While
+    While weight >= 2.0
+        weight *= 0.5
+        exponent += 1
+    End While
+    While largest >= 2.0
+        largest *= 0.5
+        exponent -= 1
+    End While
+    While largest < 1.0
+        largest *= 2.0
+        exponent += 1
+    End While
+    Dim term As Double = (value * weight / largest) / total
+    While exponent > 0
+        term *= 2.0
+        exponent -= 1
+    End While
+    While exponent < 0
+        term *= 0.5
+        exponent += 1
+    End While
+    Return term
+End Function
+
+Private Function Blend(a As Double, b As Double, fraction As Double) As Double
+    If (a >= 0.0 And b >= 0.0) Or (a <= 0.0 And b <= 0.0) Then Return a + (b - a) * fraction
+    Return a * (1.0 - fraction) + b * fraction
+End Function
+
+' Center about the first observation before scaling to retain small offsets.
+Private Function Center(values As Array Of Double, ByRef scale As Double) As Array Of Double
+    Validate(values, 1)
+    Dim origin As Double = values(0)
+    Dim differences() As Double
+    Dim direct As Boolean = True
+    scale = 0.0
+    For Each value As Double In values
+        Dim delta As Double = value - origin
+        If Not (delta <= 1.7976931348623157e308 And delta >= -1.7976931348623157e308) Then direct = False
+        Array.Append(differences, delta)
+        scale = Math.Max(scale, Math.Abs(value))
+    Next
+    If direct Then
+        scale = 0.0
+        For Each delta As Double In differences
+            scale = Math.Max(scale, Math.Abs(delta))
+        Next
+    End If
+    If scale = 0.0 Then Return differences
+    For i As Integer = 0 To Array.Count(values) - 1
+        If direct Then
+            differences(i) = differences(i) / scale
+        Else
+            differences(i) = values(i) / scale - origin / scale
+        End If
+    Next
+    Dim centerValue As Double = Stats.Mean(differences)
+    For i As Integer = 0 To Array.Count(values) - 1
+        differences(i) -= centerValue
+    Next
+    Return differences
+End Function
+
+Private Function Dot(a As Array Of Double, b As Array Of Double) As Double
+    Dim terms() As Double
+    For i As Integer = 0 To Array.Count(a) - 1
+        Array.Append(terms, a(i) * b(i))
+    Next
+    Return AccurateSum(terms)
+End Function
+
+Public Class RegressionResult
+    Public Property Slope As Double
+    Public Property Intercept As Double
+    Public Property RSquared As Double
+    Public Property Count As Integer
+End Class
+
+Public Class Stats
+    Public Shared Function Sum(values As Array Of Double) As Double
+        Validate(values, 0)
+        Return AccurateSum(values)
+    End Function
+
+    Public Shared Function Mean(values As Array Of Double) As Double
+        Validate(values, 1)
+        Dim n As Double = Array.Count(values)
+        Dim terms() As Double
+        ' Use an anchor for tightly clustered observations.
+        Dim anchor As Double = values(0)
+        Dim tight As Boolean = True
+        For Each value As Double In values
+            If Math.Abs(value - anchor) > Math.Abs(anchor) * 0.5 Then tight = False
+        Next
+        If Not tight Then
+            Try
+                Return AccurateSum(values) / n
+            Catch e As InvalidArgumentException
+                ' Scale terms only when unscaled expansion overflows.
+            End Try
+        End If
+        For Each value As Double In values
+            If tight Then
+                Array.Append(terms, (value - anchor) / n)
+            Else
+                Array.Append(terms, value / n)
+            End If
+        Next
+        Dim output As Double = AccurateSum(terms)
+        If tight Then output += anchor
+        Finite(output)
+        Return output
+    End Function
+
+    Public Shared Function Minimum(values As Array Of Double) As Double
+        Validate(values, 1)
+        Dim output As Double = values(0)
+        For Each value As Double In values
+            If value < output Then output = value
+        Next
+        Return output
+    End Function
+
+    Public Shared Function Maximum(values As Array Of Double) As Double
+        Validate(values, 1)
+        Dim output As Double = values(0)
+        For Each value As Double In values
+            If value > output Then output = value
+        Next
+        Return output
+    End Function
+
+    Public Shared Function Quantile(values As Array Of Double, probability As Double) As Double
+        Validate(values, 1)
+        Finite(probability)
+        If probability < 0.0 Or probability > 1.0 Then Throw New InvalidArgumentException("Probability must be in [0,1]")
+        Dim sorted As Array Of Double = Array.Clone(values)
+        Array.Sort(sorted)
+        Dim position As Double = (Array.Count(sorted) - 1) * probability
+        Dim lower As Integer = Math.Floor(position)
+        If lower >= Array.Count(sorted) - 1 Then Return sorted(lower)
+        Return Blend(sorted(lower), sorted(lower + 1), position - lower)
+    End Function
+
+    Public Shared Function Median(values As Array Of Double) As Double
+        Return Stats.Quantile(values, 0.5)
+    End Function
+
+    Private Shared Function Deviation(values As Array Of Double, correction As Integer) As Double
+        Validate(values, correction + 1)
+        Dim scale As Double = 0.0
+        Dim centered As Array Of Double = Center(values, scale)
+        Dim denominator As Double = Array.Count(values) - correction
+        Dim output As Double = scale * Math.Sqrt(Dot(centered, centered) / denominator)
+        Finite(output)
+        Return output
+    End Function
+
+    Public Shared Function PopulationStandardDeviation(values As Array Of Double) As Double
+        Return Stats.Deviation(values, 0)
+    End Function
+
+    Public Shared Function PopulationVariance(values As Array Of Double) As Double
+        Dim sd As Double = Stats.Deviation(values, 0)
+        Dim output As Double = sd * sd
+        Finite(output)
+        Return output
+    End Function
+
+    Public Shared Function SampleStandardDeviation(values As Array Of Double) As Double
+        Return Stats.Deviation(values, 1)
+    End Function
+
+    Public Shared Function SampleVariance(values As Array Of Double) As Double
+        Dim sd As Double = Stats.Deviation(values, 1)
+        Dim output As Double = sd * sd
+        Finite(output)
+        Return output
+    End Function
+
+    Private Shared Function Covariance(values As Array Of Double, other As Array Of Double, correction As Integer) As Double
+        Validate(values, correction + 1)
+        Validate(other, correction + 1)
+        If Array.Count(values) <> Array.Count(other) Then Throw New InvalidArgumentException("Lengths differ")
+        Dim sx As Double = 0.0
+        Dim sy As Double = 0.0
+        Dim x As Array Of Double = Center(values, sx)
+        Dim y As Array Of Double = Center(other, sy)
+        Dim denominator As Double = Array.Count(values) - correction
+        Dim output As Double = (Dot(x, y) / denominator * sx) * sy
+        Finite(output)
+        Return output
+    End Function
+
+    Public Shared Function PopulationCovariance(values As Array Of Double, other As Array Of Double) As Double
+        Return Stats.Covariance(values, other, 0)
+    End Function
+
+    Public Shared Function SampleCovariance(values As Array Of Double, other As Array Of Double) As Double
+        Return Stats.Covariance(values, other, 1)
+    End Function
+
+    Public Shared Function Correlation(values As Array Of Double, other As Array Of Double) As Double
+        Validate(values, 2)
+        Validate(other, 2)
+        If Array.Count(values) <> Array.Count(other) Then Throw New InvalidArgumentException("Lengths differ")
+        Dim sx As Double = 0.0
+        Dim sy As Double = 0.0
+        Dim x As Array Of Double = Center(values, sx)
+        Dim y As Array Of Double = Center(other, sy)
+        Dim xx As Double = Dot(x, x)
+        Dim yy As Double = Dot(y, y)
+        If xx = 0.0 Or yy = 0.0 Then Throw New InvalidArgumentException("Zero variance correlation")
+        Return Math.Max(-1.0, Math.Min(1.0, (Dot(x, y) / Math.Sqrt(xx)) / Math.Sqrt(yy)))
+    End Function
+
+    Public Shared Function WeightedMean(values As Array Of Double, weights As Array Of Double) As Double
+        Validate(values, 1)
+        Validate(weights, 1)
+        If Array.Count(values) <> Array.Count(weights) Then Throw New InvalidArgumentException("Lengths differ")
+        Dim largest As Double = 0.0
+        For Each weight As Double In weights
+            If weight < 0.0 Then Throw New InvalidArgumentException("Weights must be nonnegative")
+            largest = Math.Max(largest, weight)
+        Next
+        If largest = 0.0 Then Throw New InvalidArgumentException("Weights must have positive total")
+        Dim normalized() As Double
+        For Each weight As Double In weights
+            Array.Append(normalized, weight / largest)
+        Next
+        Dim total As Double = AccurateSum(normalized)
+        ' Center clustered observations before applying fractional weights. This
+        ' preserves constant subnormal values and small spreads at large offsets.
+        Dim anchor As Double = 0.0
+        For i As Integer = 0 To Array.Count(values) - 1
+            If weights(i) > 0.0 Then
+                anchor = values(i)
+                Exit For
+            End If
+        Next
+        Dim tight As Boolean = True
+        For i As Integer = 0 To Array.Count(values) - 1
+            If weights(i) > 0.0 And Math.Abs(values(i) - anchor) > Math.Abs(anchor) * 0.5 Then tight = False
+        Next
+        Dim terms() As Double
+        For i As Integer = 0 To Array.Count(values) - 1
+            If weights(i) > 0.0 Then
+                Dim value As Double = values(i)
+                If tight Then value -= anchor
+                Array.Append(terms, WeightedTerm(value, weights(i), largest, total))
+            End If
+        Next
+        Dim output As Double = AccurateSum(terms)
+        If tight Then output += anchor
+        Finite(output)
+        Return output
+    End Function
+
+    Public Shared Function LinearRegression(values As Array Of Double, other As Array Of Double) As RegressionResult
+        Validate(values, 2)
+        Validate(other, 2)
+        If Array.Count(values) <> Array.Count(other) Then Throw New InvalidArgumentException("Lengths differ")
+        Dim sx As Double = 0.0
+        Dim sy As Double = 0.0
+        Dim x As Array Of Double = Center(values, sx)
+        Dim y As Array Of Double = Center(other, sy)
+        Dim xx As Double = Dot(x, x)
+        Dim yy As Double = Dot(y, y)
+        Dim xy As Double = Dot(x, y)
+        If xx = 0.0 Then Throw New InvalidArgumentException("Regression requires varying X")
+        Dim output As New RegressionResult
+        output.Count = Array.Count(values)
+        output.Slope = (xy / xx * sy) / sx
+        output.Intercept = Stats.Mean(other) - output.Slope * Stats.Mean(values)
+        Finite(output.Slope)
+        Finite(output.Intercept)
+        If yy = 0.0 Then
+            Dim zero As Double = 0.0
+            output.RSquared = zero / zero
+        Else
+            Dim r As Double = (xy / Math.Sqrt(xx)) / Math.Sqrt(yy)
+            output.RSquared = Math.Min(1.0, r * r)
+        End If
+        Return output
+    End Function
+End Class
+
+' Constant-space streaming moments; spread is population standard deviation.
+Public Class RunningStatistics
+    Private Property mCount As Integer = 0
+    Private Property mMean As Double = 0.0
+    Private Property mSpread As Double = 0.0
+
+    Public Property Count As Integer
+        Get
+            Return mCount
+        End Get
+    End Property
+
+    Public Property Mean As Double
+        Get
+            If mCount = 0 Then Throw New InvalidArgumentException("Empty running statistics")
+            Return mMean
+        End Get
+    End Property
+
+    Public Sub Add(value As Double)
+        Finite(value)
+        Dim singleton As New RunningStatistics
+        singleton.mCount = 1
+        singleton.mMean = value
+        Merge(singleton)
+    End Sub
+
+    Public Sub Merge(other As RunningStatistics)
+        If other Is Nil Then Throw New InvalidArgumentException("Nil running statistics")
+        If other.mCount = 0 Then Exit Sub
+        If mCount > 9223372036854775807 - other.mCount Then Throw New InvalidArgumentException("Observation count overflow")
+        Dim countValue As Integer = mCount + other.mCount
+        Dim total As Double = countValue
+        Dim fraction As Double = other.mCount / total
+        Dim leftFraction As Double = mCount / total
+        Dim meanValue As Double = Blend(mMean, other.mMean, fraction)
+        Dim scale As Double = Math.Max(mSpread, other.mSpread)
+        Dim difference As Double = other.mMean - mMean
+        Dim normalizedDifference As Double = 0.0
+        If difference <= 1.7976931348623157e308 And difference >= -1.7976931348623157e308 Then
+            scale = Math.Max(scale, Math.Abs(difference))
+            If scale <> 0.0 Then normalizedDifference = difference / scale
+        Else
+            scale = Math.Max(scale, Math.Max(Math.Abs(mMean), Math.Abs(other.mMean)))
+            normalizedDifference = other.mMean / scale - mMean / scale
+        End If
+        Dim spreadValue As Double = 0.0
+        If scale <> 0.0 Then
+            Dim a As Double = mSpread / scale
+            Dim b As Double = other.mSpread / scale
+            spreadValue = scale * Math.Sqrt(leftFraction * a * a + fraction * b * b + leftFraction * fraction * normalizedDifference * normalizedDifference)
+        End If
+        Finite(meanValue)
+        Finite(spreadValue)
+        mCount = countValue
+        mMean = meanValue
+        mSpread = spreadValue
+    End Sub
+
+    Public Function PopulationStandardDeviation() As Double
+        If mCount = 0 Then Throw New InvalidArgumentException("Empty running statistics")
+        Return mSpread
+    End Function
+
+    Public Function SampleStandardDeviation() As Double
+        If mCount < 2 Then Throw New InvalidArgumentException("Sample requires two observations")
+        Dim countValue As Double = mCount
+        Dim output As Double = mSpread * Math.Sqrt(countValue / (countValue - 1.0))
+        Finite(output)
+        Return output
+    End Function
+
+    Public Function PopulationVariance() As Double
+        Dim sd As Double = PopulationStandardDeviation()
+        Dim output As Double = sd * sd
+        Finite(output)
+        Return output
+    End Function
+
+    Public Function SampleVariance() As Double
+        Dim sd As Double = SampleStandardDeviation()
+        Dim output As Double = sd * sd
+        Finite(output)
+        Return output
+    End Function
+End Class
