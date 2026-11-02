@@ -1,4 +1,4 @@
-# Compute statistics, regression and streaming moments
+# Stats, regression, streaming moments
 
 `statskit` implements Finite Double descriptive statistics, regression and streaming moments.
 
@@ -15,7 +15,7 @@ consumer project for reproducible installs.
 
 ## Example
 
-```buoy
+```basic
 Import statskit
 Sub Main()
     Dim values() As Double = [1.0, 2.0, 3.0, 4.0]
