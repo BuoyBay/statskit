@@ -1,4 +1,4 @@
-# Stats, regression, streaming moments
+# Stats and regression
 
 `statskit` implements Finite Double descriptive statistics, regression and streaming moments.
 
