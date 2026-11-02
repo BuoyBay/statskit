@@ -14,6 +14,3 @@ cp packages/statskit-0.1.0.buipkg "$example_dir/packages/"
 Isolation avoids discovery of unrelated app resources in this checkout.
 No dependency manifest is needed for a presealed archive. The included
 `bpm.json` describes local source acquisition when developing in this repository.
-
-
-Maintainers run the private validation suite before release. See the repository README for public build instructions.

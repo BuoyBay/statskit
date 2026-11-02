@@ -85,7 +85,3 @@ positive variance or residual is enforced. No arbitrary precision or formal
 mathematical conformance claim is made.
 
 ## Validation scope
-
-
-Maintainers run the private validation suite before release. See the repository README for public build instructions.
-

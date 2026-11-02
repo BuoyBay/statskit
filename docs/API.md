@@ -1,15 +1,11 @@
 # StatsKit
 
-Maintainers run the private validation suite before release. See the repository README for public build instructions.
-
-
 ## Start with the standalone consumer
 
 The [example](../examples/statskit/README.md) explains how to copy its existing
 `main.bui` into an isolated application with the sealed package. It calculates
 mean 2.5 and sample variance approximately 1.66667 for four observations, then
-feeds the same values into `RunningStatistics`. The verifier above compiles that
-consumer on every supported target; no native library or GUI is required.
+feeds the same values into `RunningStatistics`. no native library or GUI is required.
 
 Choose batch `Stats` methods when observations remain available, especially for
 small variances around large offsets. `RunningStatistics` retains constant-size
